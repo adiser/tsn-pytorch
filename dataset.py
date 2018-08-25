@@ -7,8 +7,9 @@ import numpy as np
 from numpy.random import randint
 
 class VideoRecord(object):
-    def __init__(self, row):
+    def __init__(self, row, custom = False):
         self._data = row
+        self.custom = custom
 
     @property
     def path(self):
@@ -16,7 +17,10 @@ class VideoRecord(object):
 
     @property
     def num_frames(self):
-        return int(self._data[1])
+        if self.custom:
+            return int(self._data[1]) - 9
+        else:
+            return int(self._data[1])
 
     @property
     def label(self):
@@ -26,7 +30,7 @@ class VideoRecord(object):
 class TSNDataSet(data.Dataset):
     def __init__(self, root_path, list_file,
                  num_segments=3, new_length=1, modality='RGB',
-                 image_tmpl='img_{:05d}.jpg', transform=None,
+                 image_tmpl='img_{:05d}.jpg', transform=None, custom_prefix = None,
                  force_grayscale=False, random_shift=True, test_mode=False):
 
         self.root_path = root_path
@@ -34,7 +38,13 @@ class TSNDataSet(data.Dataset):
         self.num_segments = num_segments
         self.new_length = new_length
         self.modality = modality
-        self.image_tmpl = image_tmpl
+        self.custom_prefix = custom_prefix
+
+        if custom_prefix:
+            self.image_tmpl = self.custom_prefix + '{:05d}.jpg'
+        else:
+            self.image_tmpl = image_tmpl
+
         self.transform = transform
         self.random_shift = random_shift
         self.test_mode = test_mode
@@ -48,13 +58,18 @@ class TSNDataSet(data.Dataset):
         if self.modality == 'RGB' or self.modality == 'RGBDiff':
             return [Image.open(os.path.join(directory, self.image_tmpl.format(idx))).convert('RGB')]
         elif self.modality == 'Flow':
+            if idx != 1:
+                idx = idx - 1
             x_img = Image.open(os.path.join(directory, self.image_tmpl.format('x', idx))).convert('L')
             y_img = Image.open(os.path.join(directory, self.image_tmpl.format('y', idx))).convert('L')
 
             return [x_img, y_img]
 
     def _parse_list(self):
-        self.video_list = [VideoRecord(x.strip().split(' ')) for x in open(self.list_file)]
+        if self.image_tmpl.startswith('rp'):
+            self.video_list = [VideoRecord(x.strip().split(' '), True) for x in open(self.list_file)]
+        else:
+            self.video_list = [VideoRecord(x.strip().split(' '), False) for x in open(self.list_file)]
 
     def _sample_indices(self, record):
         """

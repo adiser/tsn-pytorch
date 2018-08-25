@@ -32,7 +32,7 @@ def main():
 
     model = TSN(num_class, args.num_segments, args.modality,
                 base_model=args.arch,
-                consensus_type=args.consensus_type, dropout=args.dropout, partial_bn=not args.no_partialbn)
+                consensus_type=args.consensus_type, dropout=args.dropout, partial_bn=not args.no_partialbn, pretrained_on_kinetics = args.pretrained_on_kinetics)
 
     crop_size = model.crop_size
     scale_size = model.scale_size
@@ -78,7 +78,8 @@ def main():
                        Stack(roll=args.arch == 'BNInception'),
                        ToTorchFormatTensor(div=args.arch != 'BNInception'),
                        normalize,
-                   ])),
+                   ]),
+                   custom_prefix = args.custom_prefix),
         batch_size=args.batch_size, shuffle=True,
         num_workers=args.workers, pin_memory=True)
 
@@ -94,7 +95,8 @@ def main():
                        Stack(roll=args.arch == 'BNInception'),
                        ToTorchFormatTensor(div=args.arch != 'BNInception'),
                        normalize,
-                   ])),
+                   ]),
+                   custom_prefix = args.custom_prefix),
         batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True)
 

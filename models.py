@@ -1,5 +1,5 @@
 from torch import nn
-
+from collections import OrderedDict
 from ops.basic_ops import ConsensusModule, Identity
 from transforms import *
 from torch.nn.init import normal, constant
@@ -9,7 +9,7 @@ class TSN(nn.Module):
                  base_model='resnet101', new_length=None,
                  consensus_type='avg', before_softmax=True,
                  dropout=0.8,
-                 crop_num=1, partial_bn=True):
+                 crop_num=1, partial_bn=True, pretrained_on_kinetics = False):
         super(TSN, self).__init__()
         self.modality = modality
         self.num_segments = num_segments
@@ -18,6 +18,7 @@ class TSN(nn.Module):
         self.dropout = dropout
         self.crop_num = crop_num
         self.consensus_type = consensus_type
+        self.pretrained_on_kinetics = pretrained_on_kinetics
         if not before_softmax and consensus_type != 'avg':
             raise ValueError("Only avg consensus can be used after Softmax")
 
@@ -59,6 +60,7 @@ TSN Configurations:
             self.partialBN(True)
 
     def _prepare_tsn(self, num_class):
+        print(self.base_model)
         feature_dim = getattr(self.base_model, self.base_model.last_layer_name).in_features
         if self.dropout == 0:
             setattr(self.base_model, self.base_model.last_layer_name, nn.Linear(feature_dim, num_class))
@@ -93,8 +95,28 @@ TSN Configurations:
                 self.input_std = self.input_std + [np.mean(self.input_std) * 2] * 3 * self.new_length
         elif base_model == 'BNInception':
             import tf_model_zoo
-            self.base_model = getattr(tf_model_zoo, base_model)()
-            self.base_model.last_layer_name = 'fc'
+
+            if self.pretrained_on_kinetics:
+                if self.pretrained_on_kinetics == 1:
+                    self.base_model = getattr(tf_model_zoo, base_model)(model_path = 'tf_model_zoo/bninception/bn_inception_kinetics.yaml',
+                                                                        weight_path = 'tf_model_zoo/bninception/bn_inception_kinetics.pth')
+                elif self.pretrained_on_kinetics == 2:
+                    self.base_model = getattr(tf_model_zoo, base_model)(model_path = 'tf_model_zoo/bninception/bn_inception_kinetics_flow.yaml',
+                                                                        weight_path = 'tf_model_zoo/bninception/bn_inception_kinetics_flow.pth')
+                elif self.pretrained_on_kinetics == 3:
+                    self.base_model = getattr(tf_model_zoo, base_model)(model_path = 'tf_model_zoo/bninception/bn_inception_kinetics.yaml',
+                                                                        weight_path = 'tf_model_zoo/bninception/kinetics_to_hmdb51_rgb_1.pth')
+                elif self.pretrained_on_kinetics == 4:
+                    self.base_model = getattr(tf_model_zoo, base_model)(model_path = 'tf_model_zoo/bninception/bn_inception_kinetics_flow.yaml',
+                                                                        weight_path = 'tf_model_zoo/bninception/kinetics_to_hmdb51_flow_1.pth')
+                else:
+                    raise ValueError("Invalid combination of arguments")
+                self.base_model.last_layer_name = 'fc_action'
+
+            else:
+                self.base_model = getattr(tf_model_zoo, base_model)()
+                self.base_model.last_layer_name = 'fc'
+
             self.input_size = 224
             self.input_mean = [104, 117, 128]
             self.input_std = [1]
@@ -103,14 +125,70 @@ TSN Configurations:
                 self.input_mean = [128]
             elif self.modality == 'RGBDiff':
                 self.input_mean = self.input_mean * (1 + self.new_length)
-
-        elif 'inception' in base_model:
+        
+        elif base_model == 'inceptionv3':
             import tf_model_zoo
-            self.base_model = getattr(tf_model_zoo, base_model)()
-            self.base_model.last_layer_name = 'classif'
+            if self.pretrained_on_kinetics:
+                if self.pretrained_on_kinetics == 1:
+                    self.base_model = getattr(tf_model_zoo, base_model)(model_path = 'tf_model_zoo/bninception/inceptionv3_kinetics.yaml',
+                                                                        weight_path = 'tf_model_zoo/bninception/inceptionv3_kinetics.pth')
+                    
+                elif self.pretrained_on_kinetics == 2:
+                    self.base_model = getattr(tf_model_zoo, base_model)(model_path = 'tf_model_zoo/bninception/inceptionv3_kinetics_flow.yaml',
+                                                                        weight_path = 'tf_model_zoo/bninception/inceptionv3_kinetics_flow.pth')
+                else:
+                    raise ValueError("Invalid combination of arguments")
+                self.base_model.last_layer_name = 'fc_action'
+            else:
+                self.base_model = getattr(tf_model_zoo, base_model)()
+                self.base_model.last_layer_name = 'top_cls_fc'
             self.input_size = 299
             self.input_mean = [0.5]
             self.input_std = [0.5]
+
+        elif 'inception' in base_model:
+            # import tf_model_zoo
+            # self.base_model = getattr(tf_model_zoo, base_model)()
+            # self.base_model.last_layer_name = 'classif'
+            # self.input_size = 299
+            # self.input_mean = [0.5]
+            # self.input_std = [0.5]
+            
+            import pretrainedmodels
+            self.base_model = pretrainedmodels.__dict__[base_model](num_classes = 1000, pretrained = 'imagenet')
+            self.base_model.last_layer_name = 'last_linear'
+            self.input_size = 299
+            self.input_mean = [0.5]
+            self.input_std = [0.5]
+        #Experimenting with shake shake model
+        elif base_model == 'shake_shake':
+            import custom_models
+
+            model_config = OrderedDict([
+                ('arch', 'shake_shake'),
+                ('depth', 26),
+                ('base_channels', 32),
+                ('shake_forward', True),
+                ('shake_backward', True),
+                ('shake_image', True),
+                ('input_shape', (1, 3, 224, 224)),
+                ('n_classes', 101), #num_classes wll be handled at prepare_tsn
+            ])
+
+            self.base_model = getattr(custom_models, 'shake_shake')(model_config)
+            self.base_model.last_layer_name = 'fc' #to be changed at the other methods
+            self.input_size = 224
+            self.input_mean = [0.485, 0.456, 0.406]
+            self.input_std = [0.229, 0.224, 0.225]
+
+            if self.modality == 'Flow':
+
+                self.input_mean = [0.5]
+                self.input_std = [np.mean(self.input_std)]
+            elif self.modality == 'RGBDiff':
+                self.input_mean = [0.485, 0.456, 0.406] + [0] * 3 * self.new_length
+                self.input_std = self.input_std + [np.mean(self.input_std) * 2] * 3 * self.new_length
+            
         else:
             raise ValueError('Unknown base model: {}'.format(base_model))
 
@@ -237,7 +315,7 @@ TSN Configurations:
         params = [x.clone() for x in conv_layer.parameters()]
         kernel_size = params[0].size()
         new_kernel_size = kernel_size[:1] + (2 * self.new_length, ) + kernel_size[2:]
-        new_kernels = params[0].data.mean(dim=1, keepdim=True).expand(new_kernel_size).contiguous()
+        new_kernels = params[0].data.mean(dim=1).expand(new_kernel_size).contiguous()
 
         new_conv = nn.Conv2d(2 * self.new_length, conv_layer.out_channels,
                              conv_layer.kernel_size, conv_layer.stride, conv_layer.padding,
@@ -265,7 +343,7 @@ TSN Configurations:
         kernel_size = params[0].size()
         if not keep_rgb:
             new_kernel_size = kernel_size[:1] + (3 * self.new_length,) + kernel_size[2:]
-            new_kernels = params[0].data.mean(dim=1, keepdim=True).expand(new_kernel_size).contiguous()
+            new_kernels = params[0].data.mean(dim=1).expand(new_kernel_size).contiguous()
         else:
             new_kernel_size = kernel_size[:1] + (3 * self.new_length,) + kernel_size[2:]
             new_kernels = torch.cat((params[0].data, params[0].data.mean(dim=1, keepdim=True).expand(new_kernel_size).contiguous()),
